@@ -1,151 +1,267 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Time Lookup</title>
+  <title>Custom Time Lookup</title>
   <style>
     body {
       font-family: sans-serif;
       margin: 16px;
     }
-    .result-item {
-      margin-bottom: 4px;
-    }
-    .total-time {
-      margin-top: 12px;
-      font-weight: bold;
-    }
     .no-selection {
       color: #888;
+      margin-bottom: 8px;
     }
-    .node-line {
+    .top-level-frame {
+      margin-bottom: 8px;
+    }
+    .expand-btn {
+      margin-left: 8px;
+      font-size: 0.8rem;
+    }
+    .child-line {
       margin-bottom: 4px;
       white-space: nowrap;
+    }
+    .total-time {
+      font-weight: bold;
+      margin-top: 12px;
     }
   </style>
 </head>
 <body>
   <div id="content"></div>
+  <!-- The overall total for all selected frames -->
+  <div id="overall-total" class="total-time"></div>
 
-  <!-- Button to Re-run the lookup -->
   <button id="rerun">Re-run Lookup</button>
 
   <script>
     /**
-     * Recursively render a node in the hierarchy.
-     * 
-     * Rules:
-     * 1) If node.subtreeTime === 0 and !node.isExplicit, skip this node entirely
-     *    (i.e. do not show or recurse into it).
-     * 2) If node.isExplicit && node.matchedTime === undefined => show "No match found"
-     * 3) Otherwise, if matchedTime is a number => show that number
-     * 4) Always show the subtreeTime in parentheses (so e.g. mother node can show total)
+     * We'll store the top-level NodeTrees (the frames the user explicitly selected).
+     * Each NodeTree has { name, matchedTime, subtreeTime, isExplicit, children[] }.
+     * We'll track which are expanded in expandedStates[].
      */
-    function renderNodeTree(node, depth) {
-      // 1) If this node wasn't selected explicitly and has a 0 subtreeTime,
-      //    it means there are no matches in its entire subtree => skip it
-      if (!node.isExplicit && node.subtreeTime === 0) {
-        return "";
-      }
+    let topLevelTrees = [];
+    let expandedStates = [];
 
-      const indent = 20 * depth;
-
-      // 2) Decide how to display matchedTime
-      let matchedPart = "";
-      if (node.matchedTime === undefined) {
-        // Means "No match" for an explicitly selected node
-        // or we forced matchedTime=undefined for top-level
-        if (node.isExplicit) {
-          matchedPart = "No match found";
-        } else {
-          // Child node with no match => hide matched time
-          matchedPart = "";
-        }
-      } else {
-        // We do have a number
-        matchedPart = `${node.matchedTime} s`;
-      }
-
-      // We'll always show total for clarity
-      const totalPart = `${node.subtreeTime} s`;
-
-      // Build a line of text
-      let line = `<div class="node-line" style="margin-left:${indent}px">
-        <strong>${node.name}</strong>
-        <span style="color:#666"> (`;
-
-      if (matchedPart) {
-        line += `matched: ${matchedPart}, `;
-      }
-      line += `total: ${totalPart})</span></div>`;
-
-      // Recurse into children
-      for (const child of node.children) {
-        line += renderNodeTree(child, depth + 1);
-      }
-
-      return line;
-    }
-
-    /**
-     * Render an array of top-level NodeTrees (in case the user selected multiple nodes).
-     */
-    function renderHierarchies(hierarchies) {
-      if (!hierarchies || hierarchies.length === 0) {
-        return "<p>No hierarchy data</p>";
-      }
-      let html = "<hr><h3>Hierarchy View</h3>";
-      for (const tree of hierarchies) {
-        html += renderNodeTree(tree, 0);
-        html += "<hr>";
-      }
-      return html;
-    }
-
-    // Handle messages from the plugin's main code
+    // Listen for messages from the plugin code
     onmessage = (event) => {
       const msg = event.data.pluginMessage;
       if (!msg) return;
+
       const contentEl = document.getElementById("content");
+      const overallTotalEl = document.getElementById("overall-total");
 
       switch (msg.type) {
-        case "NO_SELECTION":
-          contentEl.innerHTML = "<p class='no-selection'>No component selected.</p>";
+        case "NO_SELECTION": {
+          topLevelTrees = [];
+          expandedStates = [];
+          contentEl.innerHTML = `<p class="no-selection">No component selected.</p>`;
+          overallTotalEl.textContent = "";
           break;
+        }
 
         case "SHOW_RESULTS": {
-          const { results, totalTime, hierarchies } = msg.payload;
-          let html = "";
+          // We expect "hierarchies" to be an array of NodeTree objects
+          const { hierarchies } = msg.payload;
+          topLevelTrees = hierarchies || [];
+          // Initialize expand states to false
+          expandedStates = new Array(topLevelTrees.length).fill(false);
 
-          // --- (1) Render your existing flat list ---
-          results.forEach((item) => {
-            if (item.time !== undefined) {
-              html += `<div class="result-item">
-                <strong>${item.nodeName}</strong>: ${item.time} s
-              </div>`;
-            } else {
-              html += `<div class="result-item">
-                <strong>${item.nodeName}</strong>: No match found
-              </div>`;
-            }
-          });
-          html += `<div class="total-time">Total Time: ${totalTime} s</div>`;
-
-          // --- (2) Render the new hierarchical view ---
-          html += renderHierarchies(hierarchies);
-
-          contentEl.innerHTML = html;
+          renderUI();
           break;
         }
       }
     };
 
-    // Listen for a click on the "Re-run Lookup" button
-    const rerunBtn = document.getElementById("rerun");
-    rerunBtn.addEventListener("click", () => {
+    /**
+     * Renders the entire UI:
+     * - Each top-level frame with "FrameName: subtreeTime s [Expand/Collapse]"
+     * - A single overall total for all frames combined
+     */
+    function renderUI() {
+      const contentEl = document.getElementById("content");
+      const overallTotalEl = document.getElementById("overall-total");
+
+      // Sum all top-level subtreeTimes
+      let totalTime = 0;
+      for (const tree of topLevelTrees) {
+        totalTime += tree.subtreeTime;
+      }
+
+      // Build HTML for each top-level node
+      let html = "";
+      topLevelTrees.forEach((tree, index) => {
+        html += renderTopLevelFrame(tree, index);
+      });
+
+      contentEl.innerHTML = html;
+
+      // Show the combined total of all selected frames
+      if (topLevelTrees.length > 0) {
+        overallTotalEl.textContent = `Total Time: ${totalTime} s`;
+      } else {
+        overallTotalEl.textContent = "";
+      }
+    }
+
+    /**
+     * Renders one top-level frame line:
+     * "FrameName: subtreeTime s [Expand/Collapse]"
+     * If expanded, also display the "detailed view" which includes:
+     * - The frame itself repeated in a grouped approach (where it might show "No match found")
+     * - Its children, grouped by name
+     */
+    function renderTopLevelFrame(tree, index) {
+      const isExpanded = expandedStates[index];
+      const expandLabel = isExpanded ? "Collapse" : "Expand";
+
+      // The top line showing just "FrameName: XX s"
+      let html = `
+        <div class="top-level-frame">
+          <strong>${tree.name}</strong>: ${tree.subtreeTime} s
+          <button class="expand-btn" onclick="toggleExpand(${index})">${expandLabel}</button>
+        </div>
+      `;
+
+      // If expanded, we display the detailed breakdown
+      if (isExpanded) {
+        // We'll treat the entire node as a "group of 1" to apply the same rendering logic
+        const grouped = groupNodes([tree]);
+        // That returns an array of group objects
+        // We only expect 1 group since there's only 1 "Frame" with that name
+        // but let's handle it generically
+        for (const g of grouped) {
+          html += renderGroup(g, 1);
+        }
+      }
+
+      return html;
+    }
+
+    function toggleExpand(index) {
+      expandedStates[index] = !expandedStates[index];
+      renderUI();
+    }
+
+    /**
+     * The function "groupNodes" merges NodeTrees by name at this level,
+     * so if you have 2 children named "Checkbox", each with matchedTime=1 => we combine them into a single group:
+     *   {
+     *     name: "Checkbox",
+     *     count: 2,
+     *     sumMatched: 2,
+     *     sumSubtree: sum of children's subtreeTime,
+     *     isExplicit: true if any child is explicit,
+     *     children: merged children
+     *   }
+     */
+    function groupNodes(nodes) {
+      // Map name => array of nodes
+      const map = new Map();
+      for (const node of nodes) {
+        const key = node.name;
+        if (!map.has(key)) {
+          map.set(key, []);
+        }
+        map.get(key).push(node);
+      }
+
+      // Build an array of group objects
+      const groups = [];
+      for (const [name, sameNameNodes] of map.entries()) {
+        // Combine them
+        let count = 0;
+        let sumMatched = 0;    // sum of all matchedTimes
+        let sumSubtree = 0;    // sum of all subtreeTime
+        let anyExplicit = false;
+
+        // We also have to merge children if we want them grouped
+        // We'll gather all children from these sameNameNodes
+        let allChildren = [];
+        for (const nd of sameNameNodes) {
+          count++;
+          sumMatched += (nd.matchedTime || 0);
+          sumSubtree += nd.subtreeTime;
+          if (nd.isExplicit) anyExplicit = true;
+          allChildren = allChildren.concat(nd.children);
+        }
+
+        // Recursively group all the children into group objects as well
+        const childGroups = groupNodes(allChildren);
+
+        groups.push({
+          name,
+          count,
+          sumMatched,
+          sumSubtree,
+          isExplicit: anyExplicit,
+          childGroups: childGroups,
+        });
+      }
+
+      return groups;
+    }
+
+    /**
+     * Renders one "group" (a set of nodes that share the same name).
+     * - If sumMatched=0 and !isExplicit => skip (no match found in subtree).
+     * - If isExplicit && sumMatched=0 => "No match found."
+     * - If sumMatched>0 => show "name: X s * count = sumMatched s"
+     * Then show "total subtree: sumSubtree s"
+     * Then render childGroups below.
+     */
+    function renderGroup(g, depth) {
+      // If sumMatched=0 and not explicit => skip entirely (like "no match" for child)
+      if (g.sumMatched === 0 && !g.isExplicit) {
+        return "";
+      }
+
+      const indent = 20 * depth;
+      let line = "";
+
+      // Decide how to display
+      if (g.sumMatched === 0 && g.isExplicit) {
+        // i.e., an explicitly selected node with no match
+        line += `<div class="child-line" style="margin-left:${indent}px">
+          <strong>${g.name}</strong>: No match found
+          <span style="color: #666"> (total time: ${g.sumSubtree} s)</span>
+        </div>`;
+      } else {
+        // We have a matched time or sumMatched>0
+        // If we have multiple nodes combined => show "1 s * 2 = 2 s"
+        if (g.count > 1) {
+          // We'll assume each node in the group had the same matchedTime, but if not we just sum them
+          // "Checkbox: 1 s * 2 = 2 s" or "Checkbox: sumMatched s (count = x) total subtree: sumSubtree s"
+          let perItem = g.sumMatched / g.count; // might not be integer
+          perItem = Math.round(perItem * 100) / 100; // round to 2 decimals
+          line += `<div class="child-line" style="margin-left:${indent}px">
+            <strong>${g.name} x ${g.count}</strong> :
+            ${perItem} * ${g.count} = ${g.sumMatched} s
+            <span style="color: #666"> (total time: ${g.sumSubtree} s)</span>
+          </div>`;
+        } else {
+          // Single item
+          line += `<div class="child-line" style="margin-left:${indent}px">
+            <strong>${g.name}</strong>: ${g.sumMatched} s
+            <span style="color: #666"> (total time: ${g.sumSubtree} s)</span>
+          </div>`;
+        }
+      }
+
+      // Render child groups
+      for (const cg of g.childGroups) {
+        line += renderGroup(cg, depth + 1);
+      }
+
+      return line;
+    }
+
+    // Re-run button → tells plugin to runLookup() again
+    document.getElementById("rerun").onclick = () => {
       parent.postMessage({ pluginMessage: { type: "RUN_LOOKUP" } }, "*");
-    });
+    };
   </script>
 </body>
 </html>
-

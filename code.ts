@@ -165,7 +165,7 @@ async function runLookup() {
 }
 
 // Show the UI
-figma.showUI(__html__, { width: 300, height: 400 });
+figma.showUI(__html__, { width: 400, height: 300 });
 
 // Run once
 runLookup();

@@ -4,29 +4,76 @@
   <meta charset="UTF-8" />
   <title>Custom Time Lookup</title>
   <style>
+    /* ---------- Overall Page ---------- */
     body {
-      font-family: sans-serif;
+      font-family: "Inter", sans-serif; /* or pick a font you like */
       margin: 16px;
+      color: #333;
+      line-height: 1.4;
     }
-    .no-selection {
-      color: #888;
-      margin-bottom: 8px;
+
+    /* ---------- Buttons ---------- */
+    button {
+      font-family: inherit;
+      background: #83a0c0;  /* Light blue background */
+      color: #fff;         /* White text */
+      border: none;
+      border-radius: 4px;
+      padding: 4px 8px;
+      cursor: pointer;
     }
-    .top-level-frame {
-      margin-bottom: 8px;
+    button:hover {
+      background: #3A7AC0; /* Slightly darker blue on hover */
     }
+    /* Example for the "Expand/Collapse" buttons specifically */
     .expand-btn {
       margin-left: 8px;
       font-size: 0.8rem;
+      padding: 3px 6px;
     }
+
+    /* ---------- No Selection ---------- */
+    .no-selection {
+      color: #888;
+      margin-bottom: 8px;
+      font-style: italic;
+    }
+
+    /* ---------- Top-Level Frame Rows ---------- */
+    .top-level-frame {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-weight: 600; /* Bolder to highlight the main row */
+    }
+
+    /* ---------- Child Lines (Expanded) ---------- */
     .child-line {
       margin-bottom: 4px;
       white-space: nowrap;
+      font-size: 0.95rem;
     }
+
+    /* ---------- Grouping + Indentation ---------- */
+    /* We'll indent child groups by controlling left margin in JS,
+       but you can also set a consistent style here if you like. */
+
+    /* ---------- Totals ---------- */
     .total-time {
       font-weight: bold;
       margin-top: 12px;
+      padding: 8px;
+      border: 1px solid #ddd;
+      background: #f8f8f8;
+      border-radius: 4px;
     }
+
+    /* ---------- Re-run Lookup Button ---------- */
+    #rerun {
+      margin-top: 12px;
+    }
+
   </style>
 </head>
 <body>
@@ -120,7 +167,9 @@
       // The top line showing just "FrameName: XX s"
       let html = `
         <div class="top-level-frame">
-          <strong>${tree.name}</strong>: ${tree.subtreeTime} s
+          <div>
+            <strong>${tree.name}</strong>: ${tree.subtreeTime} s
+          </div>
           <button class="expand-btn" onclick="toggleExpand(${index})">${expandLabel}</button>
         </div>
       `;
@@ -154,7 +203,7 @@
      *     sumMatched: 2,
      *     sumSubtree: sum of children's subtreeTime,
      *     isExplicit: true if any child is explicit,
-     *     children: merged children
+     *     childGroups: [ ... ]
      *   }
      */
     function groupNodes(nodes) {
@@ -173,12 +222,11 @@
       for (const [name, sameNameNodes] of map.entries()) {
         // Combine them
         let count = 0;
-        let sumMatched = 0;    // sum of all matchedTimes
-        let sumSubtree = 0;    // sum of all subtreeTime
+        let sumMatched = 0; // sum of all matchedTimes
+        let sumSubtree = 0; // sum of all subtreeTime
         let anyExplicit = false;
 
         // We also have to merge children if we want them grouped
-        // We'll gather all children from these sameNameNodes
         let allChildren = [];
         for (const nd of sameNameNodes) {
           count++;
@@ -197,7 +245,7 @@
           sumMatched,
           sumSubtree,
           isExplicit: anyExplicit,
-          childGroups: childGroups,
+          childGroups
         });
       }
 
@@ -209,11 +257,11 @@
      * - If sumMatched=0 and !isExplicit => skip (no match found in subtree).
      * - If isExplicit && sumMatched=0 => "No match found."
      * - If sumMatched>0 => show "name: X s * count = sumMatched s"
-     * Then show "total subtree: sumSubtree s"
+     * Then show "total time: sumSubtree s"
      * Then render childGroups below.
      */
     function renderGroup(g, depth) {
-      // If sumMatched=0 and not explicit => skip entirely (like "no match" for child)
+      // If sumMatched=0 and not explicit => skip
       if (g.sumMatched === 0 && !g.isExplicit) {
         return "";
       }
@@ -230,14 +278,12 @@
         </div>`;
       } else {
         // We have a matched time or sumMatched>0
-        // If we have multiple nodes combined => show "1 s * 2 = 2 s"
         if (g.count > 1) {
-          // We'll assume each node in the group had the same matchedTime, but if not we just sum them
-          // "Checkbox: 1 s * 2 = 2 s" or "Checkbox: sumMatched s (count = x) total subtree: sumSubtree s"
-          let perItem = g.sumMatched / g.count; // might not be integer
+          // e.g., "Checkbox x 2 : 1 s * 2 = 2 s"
+          let perItem = g.sumMatched / g.count;
           perItem = Math.round(perItem * 100) / 100; // round to 2 decimals
           line += `<div class="child-line" style="margin-left:${indent}px">
-            <strong>${g.name} x ${g.count}</strong> :
+            <strong>${g.name} * ${g.count}</strong> :
             ${perItem} * ${g.count} = ${g.sumMatched} s
             <span style="color: #666"> (total time: ${g.sumSubtree} s)</span>
           </div>`;
@@ -258,7 +304,7 @@
       return line;
     }
 
-    // Re-run button → tells plugin to runLookup() again
+    // "Re-run Lookup" button → tells plugin to runLookup() again
     document.getElementById("rerun").onclick = () => {
       parent.postMessage({ pluginMessage: { type: "RUN_LOOKUP" } }, "*");
     };

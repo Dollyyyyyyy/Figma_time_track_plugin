@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Time Lookup</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 16px;
+    }
+    .result-item {
+      margin-bottom: 4px;
+    }
+    .total-time {
+      margin-top: 12px;
+      font-weight: bold;
+    }
+    .no-selection {
+      color: #888;
+    }
+    .node-line {
+      margin-bottom: 4px;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <div id="content"></div>
+
+  <!-- Button to Re-run the lookup -->
+  <button id="rerun">Re-run Lookup</button>
+
+  <script>
+    /**
+     * Recursively render a node in the hierarchy.
+     * 
+     * Rules:
+     * 1) If node.subtreeTime === 0 and !node.isExplicit, skip this node entirely
+     *    (i.e. do not show or recurse into it).
+     * 2) If node.isExplicit && node.matchedTime === undefined => show "No match found"
+     * 3) Otherwise, if matchedTime is a number => show that number
+     * 4) Always show the subtreeTime in parentheses (so e.g. mother node can show total)
+     */
+    function renderNodeTree(node, depth) {
+      // 1) If this node wasn't selected explicitly and has a 0 subtreeTime,
+      //    it means there are no matches in its entire subtree => skip it
+      if (!node.isExplicit && node.subtreeTime === 0) {
+        return "";
+      }
+
+      const indent = 20 * depth;
+
+      // 2) Decide how to display matchedTime
+      let matchedPart = "";
+      if (node.matchedTime === undefined) {
+        // Means "No match" for an explicitly selected node
+        // or we forced matchedTime=undefined for top-level
+        if (node.isExplicit) {
+          matchedPart = "No match found";
+        } else {
+          // Child node with no match => hide matched time
+          matchedPart = "";
+        }
+      } else {
+        // We do have a number
+        matchedPart = `${node.matchedTime} s`;
+      }
+
+      // We'll always show total for clarity
+      const totalPart = `${node.subtreeTime} s`;
+
+      // Build a line of text
+      let line = `<div class="node-line" style="margin-left:${indent}px">
+        <strong>${node.name}</strong>
+        <span style="color:#666"> (`;
+
+      if (matchedPart) {
+        line += `matched: ${matchedPart}, `;
+      }
+      line += `total: ${totalPart})</span></div>`;
+
+      // Recurse into children
+      for (const child of node.children) {
+        line += renderNodeTree(child, depth + 1);
+      }
+
+      return line;
+    }
+
+    /**
+     * Render an array of top-level NodeTrees (in case the user selected multiple nodes).
+     */
+    function renderHierarchies(hierarchies) {
+      if (!hierarchies || hierarchies.length === 0) {
+        return "<p>No hierarchy data</p>";
+      }
+      let html = "<hr><h3>Hierarchy View</h3>";
+      for (const tree of hierarchies) {
+        html += renderNodeTree(tree, 0);
+        html += "<hr>";
+      }
+      return html;
+    }
+
+    // Handle messages from the plugin's main code
+    onmessage = (event) => {
+      const msg = event.data.pluginMessage;
+      if (!msg) return;
+      const contentEl = document.getElementById("content");
+
+      switch (msg.type) {
+        case "NO_SELECTION":
+          contentEl.innerHTML = "<p class='no-selection'>No component selected.</p>";
+          break;
+
+        case "SHOW_RESULTS": {
+          const { results, totalTime, hierarchies } = msg.payload;
+          let html = "";
+
+          // --- (1) Render your existing flat list ---
+          results.forEach((item) => {
+            if (item.time !== undefined) {
+              html += `<div class="result-item">
+                <strong>${item.nodeName}</strong>: ${item.time} s
+              </div>`;
+            } else {
+              html += `<div class="result-item">
+                <strong>${item.nodeName}</strong>: No match found
+              </div>`;
+            }
+          });
+          html += `<div class="total-time">Total Time: ${totalTime} s</div>`;
+
+          // --- (2) Render the new hierarchical view ---
+          html += renderHierarchies(hierarchies);
+
+          contentEl.innerHTML = html;
+          break;
+        }
+      }
+    };
+
+    // Listen for a click on the "Re-run Lookup" button
+    const rerunBtn = document.getElementById("rerun");
+    rerunBtn.addEventListener("click", () => {
+      parent.postMessage({ pluginMessage: { type: "RUN_LOOKUP" } }, "*");
+    });
+  </script>
+</body>
+</html>
+
